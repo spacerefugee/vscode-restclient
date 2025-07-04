@@ -105,9 +105,16 @@ export class RequestController {
             if (httpRequest.isCancelled) {
                 return;
             }
-
-            this._requestStatusEntry.update({ state: RequestState.Received, response });
-
+            if (response.essence == 'text/event-stream') {
+                response.rawResponse.on('data', () => {
+                    this._requestStatusEntry.update({ state: RequestState.Received, response });
+                });
+                response.rawResponse.on('end', () => {
+                    this._requestStatusEntry.update({ state: RequestState.Received, response });
+                });
+            } else {
+                this._requestStatusEntry.update({ state: RequestState.Received, response });
+            }
             if (httpRequest.name && document) {
                 RequestVariableCache.add(document, httpRequest.name, response);
             }
