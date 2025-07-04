@@ -48,60 +48,74 @@ export class HttpClient {
         const requestUrl = encodeUrl(httpRequest.url);
         const request: CancelableRequest<Response<Buffer>> = got.default(requestUrl, options);
         httpRequest.setUnderlyingRequest(request);
-        (request as any).on('response', res => {
-            if (res.rawHeaders) {
-                headersSize += res.rawHeaders.map(h => h.length).reduce((a, b) => a + b, 0);
-                headersSize += (res.rawHeaders.length) / 2;
+        return new Promise((resolve, reject) => {
+            try {
+                (request as any).on('response', (response) => {
+                    if (response.rawHeaders) {
+                        headersSize += response.rawHeaders.map((h) => h.length).reduce((a, b) => a + b, 0);
+                        headersSize += response.rawHeaders.length / 2;
+                    }
+                    const contentType = response.headers['content-type'];
+                    let encoding: string | undefined;
+                    if (contentType) {
+                        encoding = MimeUtility.parse(contentType).charset;
+                    }
+
+                    if (!encoding) {
+                        encoding = 'utf8';
+                    }
+                    let bodyBuffer = Buffer.alloc(0);
+                    // adjust response header case, due to the response headers in nodejs http module is in lowercase
+                    const responseHeaders: ResponseHeaders = HttpClient.normalizeHeaderNames(
+                        response.headers,
+                        response.rawHeaders,
+                    );
+                    const requestBody = options.body;
+                    const httpResponse = new HttpResponse(
+                        response.statusCode,
+                        response.statusMessage!,
+                        response.httpVersion,
+                        responseHeaders,
+                        '',
+                        bodySize,
+                        headersSize,
+                        bodyBuffer,
+                        response.timings.phases,
+                        new HttpRequest(
+                        options.method!,
+                        requestUrl,
+                        HttpClient.normalizeHeaderNames(
+                            (response as any).request.options.headers as RequestHeaders,
+                            Object.keys(httpRequest.headers),
+                        ),
+                        Buffer.isBuffer(requestBody) ? convertBufferToStream(requestBody) : requestBody,
+                            httpRequest.rawBody,
+                            httpRequest.name,
+                        ),
+                        response,
+                    );
+                    response.on('data', (chunk) => {
+                        bodySize += chunk.length;
+                        let bodyString = iconv.encodingExists(encoding) ? iconv.decode(chunk, encoding) : chunk.toString();
+                        if (settings.decodeEscapedUnicodeCharacters) {
+                            bodyString = this.decodeEscapedUnicodeCharacters(bodyString);
+                        }
+                        httpResponse.body += bodyString;
+                        httpResponse.bodyBuffer = Buffer.concat([bodyBuffer, chunk]);
+                        httpResponse.bodySizeInBytes = bodySize;
+                    });
+                    if (httpResponse.essence == 'text/event-stream') {
+                        return resolve(httpResponse);
+                    } else {
+                        response.on('end', () => {
+                            resolve(httpResponse);
+                        });
+                    }
+                });
+            } catch (error) {
+                reject(error);
             }
-            res.on('data', chunk => {
-                bodySize += chunk.length;
-            });
         });
-
-        const response = await request;
-
-        const contentType = response.headers['content-type'];
-        let encoding: string | undefined;
-        if (contentType) {
-            encoding = MimeUtility.parse(contentType).charset;
-        }
-
-        if (!encoding) {
-            encoding = "utf8";
-        }
-
-        const bodyBuffer = response.body;
-        let bodyString = iconv.encodingExists(encoding) ? iconv.decode(bodyBuffer, encoding) : bodyBuffer.toString();
-
-        if (settings.decodeEscapedUnicodeCharacters) {
-            bodyString = this.decodeEscapedUnicodeCharacters(bodyString);
-        }
-
-        // adjust response header case, due to the response headers in nodejs http module is in lowercase
-        const responseHeaders: ResponseHeaders = HttpClient.normalizeHeaderNames(response.headers, response.rawHeaders);
-
-        const requestBody = options.body;
-
-        return new HttpResponse(
-            response.statusCode,
-            response.statusMessage!,
-            response.httpVersion,
-            responseHeaders,
-            bodyString,
-            bodySize,
-            headersSize,
-            bodyBuffer,
-            response.timings.phases,
-            new HttpRequest(
-                options.method!,
-                requestUrl,
-                HttpClient.normalizeHeaderNames(
-                    (response as any).request.options.headers as RequestHeaders,
-                    Object.keys(httpRequest.headers)),
-                Buffer.isBuffer(requestBody) ? convertBufferToStream(requestBody) : requestBody,
-                httpRequest.rawBody,
-                httpRequest.name
-            ));
     }
 
     public async clearCookies() {

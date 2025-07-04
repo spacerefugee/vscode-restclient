@@ -124,6 +124,14 @@ export class HttpResponseWebview extends BaseWebview {
         this.activePanel = panel;
 
         this.setIsHTMLResponse(this.activeResponse);
+        if (response.essence == 'text/event-stream') {
+            response.rawResponse.on('data', () => {
+                panel.webview.html = this.getHtmlForWebview(panel, response);
+            });
+            response.rawResponse.on('end', () => {
+                panel.title = this.getTitle(response);
+            });
+        }
     }
 
     public dispose() {
